@@ -56,3 +56,9 @@ You should see:
 ```code
 Hi username! You've successfully authenticated...
 ```
+
+# Cloudflare
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/Hantsch/RaspberrySetup/main/cloudflare_setup.sh | bash
+```
