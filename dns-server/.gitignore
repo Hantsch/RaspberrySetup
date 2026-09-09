@@ -1,0 +1,13 @@
+/config/local.json
+/backups/
+/.work/
+*.key
+*.pem
+id_*
+*.zip
+*.log
+.env
+.env.*
+__pycache__/
+*.pyc
+AdGuardHome.yaml

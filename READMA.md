@@ -1,5 +1,7 @@
 # Basic Setup
 
+Home DNS server: [AdGuard Home setup and maintenance](dns-server/README.md)
+
 ```shell
 curl -fsSL https://raw.githubusercontent.com/Hantsch/RaspberrySetup/main/basic_develop.sh | bash
 ```
