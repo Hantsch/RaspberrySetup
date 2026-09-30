@@ -14,6 +14,7 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 . (Join-Path $PSScriptRoot 'scripts/config.ps1')
 $sshOptions = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3')
+$sshHost = 'roka-dns-server'
 $remoteDir = $null
 $localDir = $null
 
@@ -40,20 +41,20 @@ function ConvertTo-WslPath([string] $Path) {
 function Invoke-PiAction([string] $RemoteAction) {
     Write-Host "AdGuard Home: $RemoteAction"
     # A real terminal permits sudo's password prompt; installer/package input is disabled on the Pi.
-    Invoke-Wsl (@('ssh') + $sshOptions + @('-tt', 'dns-server', "sudo bash '$remoteDir/run.sh' '$RemoteAction' '$remoteDir'"))
+    Invoke-Wsl (@('ssh') + $sshOptions + @('-tt', $sshHost, "sudo bash '$remoteDir/run.sh' '$RemoteAction' '$remoteDir'"))
 }
 
 function Save-PiBackup([switch] $AllowMissing) {
     if ($AllowMissing) { Invoke-PiAction 'backup-if-installed' } else { Invoke-PiAction 'backup' }
     $statePath = ConvertTo-WslPath (Join-Path $localDir 'backup-state')
-    Invoke-Wsl (@('scp') + $sshOptions + @("dns-server:$remoteDir/backup-state", $statePath))
+    Invoke-Wsl (@('scp') + $sshOptions + @("${sshHost}:$remoteDir/backup-state", $statePath))
     $state = (Get-Content -Raw -LiteralPath (Join-Path $localDir 'backup-state')).Trim()
     if ($state -eq 'absent' -and $AllowMissing) { return }
     if ($state -ne 'ready') { throw "Unexpected backup result: $state" }
     $backupDir = Join-Path $PSScriptRoot ('backups/' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     $null = New-Item -ItemType Directory -Path $backupDir
     $zipPath = ConvertTo-WslPath (Join-Path $backupDir 'adguard-home.zip')
-    Invoke-Wsl (@('scp') + $sshOptions + @("dns-server:$remoteDir/backup.zip", $zipPath))
+    Invoke-Wsl (@('scp') + $sshOptions + @("${sshHost}:$remoteDir/backup.zip", $zipPath))
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $backupDir 'adguard-home.zip'))
@@ -73,7 +74,7 @@ try {
     $null = Get-Command wsl.exe -ErrorAction Stop
     if ($Action -eq 'Admin') {
         Write-Host 'Open http://127.0.0.1:3000 in your Windows browser. Keep this tunnel open; Ctrl+C closes it.'
-        Invoke-Wsl (@('ssh') + $sshOptions + @('-N', '-o', 'ExitOnForwardFailure=yes', '-L', '127.0.0.1:3000:127.0.0.1:3000', 'dns-server'))
+        Invoke-Wsl (@('ssh') + $sshOptions + @('-N', '-o', 'ExitOnForwardFailure=yes', '-L', '127.0.0.1:3000:127.0.0.1:3000', $sshHost))
         return
     }
     $shellConfig = Read-PiConfiguration $ConfigPath
@@ -86,7 +87,7 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $localDir 'run.sh'), $backend, $utf8)
     $helper = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'scripts/adguard.py')).Replace("`r`n", "`n")
     [System.IO.File]::WriteAllText((Join-Path $localDir 'adguard.py'), $helper, $utf8)
-    $remoteOutput = Invoke-Wsl (@('ssh') + $sshOptions + @('dns-server', 'umask 077; mktemp -d /tmp/dns-server.XXXXXXXXXX'))
+    $remoteOutput = Invoke-Wsl (@('ssh') + $sshOptions + @($sshHost, 'umask 077; mktemp -d /tmp/dns-server.XXXXXXXXXX'))
     $remoteDir = ($remoteOutput -join "`n").Trim()
     if ($remoteDir -cnotmatch '^/tmp/dns-server\.[a-zA-Z0-9]{10}$') {
         $remoteDir = $null
@@ -95,7 +96,7 @@ try {
     $runPath = ConvertTo-WslPath (Join-Path $localDir 'run.sh')
     $envPath = ConvertTo-WslPath (Join-Path $localDir 'config.env')
     $helperPath = ConvertTo-WslPath (Join-Path $localDir 'adguard.py')
-    Invoke-Wsl (@('scp') + $sshOptions + @($runPath, $envPath, $helperPath, "dns-server:$remoteDir/"))
+    Invoke-Wsl (@('scp') + $sshOptions + @($runPath, $envPath, $helperPath, "${sshHost}:$remoteDir/"))
     switch ($Action) {
         'Setup' { Save-PiBackup -AllowMissing; Invoke-PiAction 'setup' }
         'Maintain' { Save-PiBackup; Invoke-PiAction 'maintain' }
@@ -106,7 +107,7 @@ try {
 } finally {
     # Only remove the exact random staging paths created by this invocation.
     if ($remoteDir -and $remoteDir -cmatch '^/tmp/dns-server\.[a-zA-Z0-9]{10}$') {
-        try { Invoke-Wsl (@('ssh') + $sshOptions + @('dns-server', "rm -rf -- '$remoteDir'")) }
+        try { Invoke-Wsl (@('ssh') + $sshOptions + @($sshHost, "rm -rf -- '$remoteDir'")) }
         catch { Write-Warning "Remote staging cleanup failed: $remoteDir. $_" }
     }
     if ($localDir) {

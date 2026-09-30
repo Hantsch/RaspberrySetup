@@ -1,7 +1,7 @@
 # DNS-Server mit AdGuard Home
 
-Raspberry-Pi-Hostname und SSH-Alias: **`dns-server`**. Die Anwendung ist AdGuard Home;
-der Rechnername bleibt auch bei einem späteren Softwarewechsel passend.
+Raspberry-Pi-Hostname und SSH-Alias (WSL): **`roka-dns-server`**. Die Anwendung
+ist AdGuard Home; der Rechnername bleibt auch bei einem späteren Softwarewechsel passend.
 
 **SSH wird vollständig in WSL eingerichtet.** Deine Linux-Schlüssel, `~/.ssh/config`,
 `known_hosts` und dein SSH-Agent werden weiterverwendet. PowerShell startet die
@@ -11,7 +11,7 @@ Automatisierung; Bash und Python führen die Arbeiten auf dem Pi aus.
 Internet -> Magenta-Router -> TP-Link (DHCP) -> LAN-Geräte
                                  |
                           Raspberry Pi (DNS)
-PowerShell -> WSL -> ssh dns-server -> AdGuard Home
+PowerShell -> WSL -> ssh roka-dns-server -> AdGuard Home
 ```
 
 ## Initial Setup
@@ -38,13 +38,13 @@ cat ~/.ssh/id_ed25519_dns-server.pub
 
 Eine Passphrase wählen; vorhandene Schlüssel nicht überschreiben.
 
-| Imager-Einstellung | Wert |
-|---|---|
-| Hostname | `dns-server` |
-| Benutzer | Eigenen Admin-Benutzer anlegen; kein vorausgesetzter Benutzer `pi` |
-| SSH | Aktivieren, Public-Key-Anmeldung mit deinem WSL-Schlüssel |
-| Sprache/Region | Tastatur, Zeitzone und gegebenenfalls WLAN-Land |
-| Netzwerk | Ethernet am TP-Link bevorzugt; alternativ WLAN-Zugangsdaten eintragen |
+| Imager-Einstellung | Wert                                                                  |
+| ------------------ | --------------------------------------------------------------------- |
+| Hostname           | `roka-dns-server`                                                     |
+| Benutzer           | Eigenen Admin-Benutzer anlegen; kein vorausgesetzter Benutzer `pi`    |
+| SSH                | Aktivieren, Public-Key-Anmeldung mit deinem WSL-Schlüssel             |
+| Sprache/Region     | Tastatur, Zeitzone und gegebenenfalls WLAN-Land                       |
+| Netzwerk           | Ethernet am TP-Link bevorzugt; alternativ WLAN-Zugangsdaten eintragen |
 
 Pi starten. Im TP-Link eine **DHCP-Reservierung** für dessen verwendete MAC-Adresse
 einrichten. Lease erneuern oder Pi neu starten, bis die reservierte IP aktiv ist.
@@ -55,7 +55,7 @@ Den bisherigen Router-DNS erst nach erfolgreichen Funktionstests umstellen.
 In deiner bestehenden **WSL-Datei `~/.ssh/config`** ergänzen, vor einem `Host *`-Block:
 
 ```sshconfig
-Host dns-server
+Host roka-dns-server
     HostName <reservierte-Pi-IP>
     User <Imager-Benutzer>
     IdentityFile ~/.ssh/id_ed25519_dns-server
@@ -71,7 +71,7 @@ Variable `SSH_AUTH_SOCK` genügt möglicherweise nicht für PowerShell-Aufrufe.
 
 ```bash
 # In WSL; beim ersten Verbinden den Host-Fingerprint prüfen und bestätigen:
-ssh dns-server
+ssh roka-dns-server
 # Auf dem Pi prüfen, dann mit exit zurück:
 sudo -v
 hostname -s
@@ -84,7 +84,7 @@ Der Fingerprint kann an der Pi-Konsole mit
 Aus **PowerShell** den späteren Zugriffsweg testen:
 
 ```powershell
-wsl --exec ssh -o BatchMode=yes dns-server true
+wsl --exec ssh -o BatchMode=yes roka-dns-server true
 ```
 
 Die Automatisierung verwendet die Standard-Distribution und deren Standardbenutzer.
@@ -101,18 +101,18 @@ Copy-Item ./dns-server/config/example.json ./dns-server/config/local.json
 notepad ./dns-server/config/local.json
 # Falls die Ausführung lokaler, geprüfter Skripte gesperrt ist, für diese Sitzung:
 Set-ExecutionPolicy -Scope Process Bypass
-./dns-server/manage.ps1 Setup
+./dns-server/manage.ps1 Setup -WslDistribution Ubuntu
 ```
 
-| Konfiguration | Bedeutung |
-|---|---|
-| `hostname` | Tatsächlicher Pi-Hostname, standardmäßig `dns-server` |
-| `ipv4`, `lan_subnet` | Reservierte IP und TP-Link-LAN-CIDR; Beispielwerte ersetzen |
-| `interface` | Tatsächliche Schnittstelle, meist `eth0` oder `wlan0` |
-| `timezone` | Zum Beispiel `Europe/Vienna` |
-| `upstream_dns` | Resolver-IP oder `https://`-/`tls://`-Adresse; Beispiel: Quad9 über HTTPS |
-| `bootstrap_dns` | Resolver-IPs zum Auflösen der verschlüsselten Upstream-Hostnamen |
-| `dns_test_name` | Öffentlicher Name mit IPv4-Antwort, standardmäßig `example.com` |
+| Konfiguration        | Bedeutung                                                                 |
+| -------------------- | ------------------------------------------------------------------------- |
+| `hostname`           | Tatsächlicher Pi-Hostname, standardmäßig `roka-dns-server`                |
+| `ipv4`, `lan_subnet` | Reservierte IP und TP-Link-LAN-CIDR; Beispielwerte ersetzen               |
+| `interface`          | Tatsächliche Schnittstelle, meist `eth0` oder `wlan0`                     |
+| `timezone`           | Zum Beispiel `Europe/Vienna`                                              |
+| `upstream_dns`       | Resolver-IP oder `https://`-/`tls://`-Adresse; Beispiel: Quad9 über HTTPS |
+| `bootstrap_dns`      | Resolver-IPs zum Auflösen der verschlüsselten Upstream-Hostnamen          |
+| `dns_test_name`      | Öffentlicher Name mit IPv4-Antwort, standardmäßig `example.com`           |
 
 Keine Resolver verwenden, die ihre Anfragen zurück an diesen Pi leiten.
 Bootstrap-Namensauflösung erfolgt unverschlüsselt; die normalen Weiterleitungen
@@ -163,7 +163,7 @@ mit `Setup` fortgesetzt werden; fremde AdGuard-Installationen werden nicht über
 ./dns-server/manage.ps1 Backup
 ./dns-server/manage.ps1 Maintain
 # Neustart ausschließlich bei bewusst gewähltem Wartungsfenster:
-wsl --exec ssh -t dns-server "sudo reboot"
+wsl --exec ssh -t roka-dns-server "sudo reboot"
 ```
 
 Zum Beispiel wöchentlich warten; vorher [Release Notes](https://github.com/AdguardTeam/AdGuardHome/releases)
@@ -199,8 +199,8 @@ und `Setup` ausführen. Gesicherte `local.json` zurückkopieren und Netzwerkwert
 In **WSL** das gewünschte Archiv hochladen (Pfad ersetzen):
 
 ```bash
-scp /mnt/c/Pfad/zum/adguard-home.zip dns-server:~/adguard-home.zip
-ssh dns-server
+scp /mnt/c/Pfad/zum/adguard-home.zip roka-dns-server:~/adguard-home.zip
+ssh roka-dns-server
 # Auf dem Pi: ersetzt die Installation; der bisherige Stand bleibt als Ordner erhalten.
 sudo systemctl stop AdGuardHome
 sudo mv /opt/AdGuardHome "/opt/AdGuardHome.before-restore-$(date +%Y%m%d-%H%M%S)"
@@ -224,31 +224,32 @@ Falls der Pi bereits als `pi-hole` eingerichtet ist, zunächst über den alten W
 verbinden. Vorhandene Pi-hole-Einstellungen bei Bedarf über dessen Teleporter sichern.
 Bei tatsächlich installiertem Pi-hole während eines Wartungsfensters
 `sudo systemctl disable --now pihole-FTL` ausführen. Es wird nicht automatisch deinstalliert.
-Danach `sudo hostnamectl set-hostname dns-server` und mit `sudoedit /etc/hosts` den alten
-Hostnamen in der `127.0.1.1`-Zeile ersetzen. Den neuen WSL-Alias `dns-server` auf dieselbe
+Danach `sudo hostnamectl set-hostname roka-dns-server` und mit `sudoedit /etc/hosts` den alten
+Hostnamen in der `127.0.1.1`-Zeile ersetzen. Den neuen WSL-Alias `roka-dns-server` auf dieselbe
 reservierte IP/Benutzer/Schlüssel setzen. Erst dann AdGuard-Setup starten.
 Pi-hole-Teleporter-Archive sind keine AdGuard-Backups; Filterlisten gezielt übernehmen.
 
 ## Troubleshooting
 
-| Problem | Prüfung / Lösung |
-|---|---|
-| SSH funktioniert nur interaktiv | In WSL Agent/`IdentityAgent` prüfen; aus PowerShell `wsl --exec ssh -o BatchMode=yes dns-server true` |
-| Falsche Distribution | `wsl --list --verbose`; `-WslDistribution` verwenden |
-| Alter Host-Key nach Reflash | Neuen Fingerprint prüfen, dann in WSL `ssh-keygen -R <Pi-IP>` und erneut verbinden |
-| Hostname/IP-Prüfung scheitert | In WSL `ssh dns-server "hostname -s; ip -4 -brief address"`; Alias/Reservierung/JSON korrigieren |
-| Dienst startet nicht | In WSL `ssh -t dns-server "sudo journalctl -u AdGuardHome -n 100 --no-pager"` |
-| Erstinstallation bricht ab | `/opt/AdGuardHome/bootstrap.log` auf dem Pi prüfen; `Setup` erneut ausführen |
-| Port belegt | Auf dem Pi `sudo ss -lntup`; Konflikt auf 53 oder 3000 beheben |
-| Filtercache fehlt | In der UI unter Filter aktualisieren, Internet/Zeitzone prüfen und `Status` wiederholen |
-| Admin-Tunnel scheitert | Lokalen Port 3000 freimachen und WSLs Weiterleitung von Windows-Localhost prüfen |
-| Clients umgehen Filter | DHCP/IPv6/DoH/VPN prüfen; DNS TCP und UDP 53 sowie Gäste-Isolation beachten |
-| DNS-Ausfall | Vorübergehend Router-DNS zurückstellen und Client-Leases erneuern; nach Reparatur zurückwechseln |
+| Problem                                           | Prüfung / Lösung                                                                                                                             |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| SSH funktioniert nur interaktiv                   | In WSL Agent/`IdentityAgent` prüfen; aus PowerShell `wsl --exec ssh -o BatchMode=yes roka-dns-server true`                                        |
+| Falsche Distribution                              | `wsl --list --verbose`; `-WslDistribution` verwenden                                                                                         |
+| `execvpe(bash) failed: No such file or directory` | Standard-Distribution ist `docker-desktop` (enthält kein Bash). `wsl --set-default Ubuntu` ausführen oder `-WslDistribution Ubuntu` anhängen |
+| Alter Host-Key nach Reflash                       | Neuen Fingerprint prüfen, dann in WSL `ssh-keygen -R <Pi-IP>` und erneut verbinden                                                           |
+| Hostname/IP-Prüfung scheitert                     | In WSL `ssh roka-dns-server "hostname -s; ip -4 -brief address"`; Alias/Reservierung/JSON korrigieren                                             |
+| Dienst startet nicht                              | In WSL `ssh -t roka-dns-server "sudo journalctl -u AdGuardHome -n 100 --no-pager"`                                                                |
+| Erstinstallation bricht ab                        | `/opt/AdGuardHome/bootstrap.log` auf dem Pi prüfen; `Setup` erneut ausführen                                                                 |
+| Port belegt                                       | Auf dem Pi `sudo ss -lntup`; Konflikt auf 53 oder 3000 beheben                                                                               |
+| Filtercache fehlt                                 | In der UI unter Filter aktualisieren, Internet/Zeitzone prüfen und `Status` wiederholen                                                      |
+| Admin-Tunnel scheitert                            | Lokalen Port 3000 freimachen und WSLs Weiterleitung von Windows-Localhost prüfen                                                             |
+| Clients umgehen Filter                            | DHCP/IPv6/DoH/VPN prüfen; DNS TCP und UDP 53 sowie Gäste-Isolation beachten                                                                  |
+| DNS-Ausfall                                       | Vorübergehend Router-DNS zurückstellen und Client-Leases erneuern; nach Reparatur zurückwechseln                                             |
 
 Die Automatisierung startet WSLs Login-Bash; dessen Profil darf keine Eingaben verlangen
 oder Banner ausgeben. Für `Admin` muss WSLs Weiterleitung von Windows-Localhost aktiv sein.
-Direkt aus WSL funktionieren `ssh dns-server` und
-`ssh -N -L 127.0.0.1:3000:127.0.0.1:3000 dns-server` ebenfalls.
+Direkt aus WSL funktionieren `ssh roka-dns-server` und
+`ssh -N -L 127.0.0.1:3000:127.0.0.1:3000 roka-dns-server` ebenfalls.
 
 ## Lokale Prüfung und technische Grundlage
 

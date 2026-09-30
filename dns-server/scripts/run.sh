@@ -58,8 +58,11 @@ apt_update() {
         -o Dpkg::Options::=--force-confold -y upgrade </dev/null
 }
 
-download_adguard() {
-    local arch
+download_adguard() (
+    local arch work
+    # Root-owned scratch space: the SSH user must be able to delete $STAGE afterwards.
+    work=$(mktemp -d)
+    trap 'code=$?; rm -rf -- "$work"; exit "$code"' EXIT
     case "$(dpkg --print-architecture)" in
         arm64) arch=arm64 ;;
         armhf) case "$(uname -m)" in armv6*) arch=armv6 ;; *) arch=armv7 ;; esac ;;
@@ -72,14 +75,13 @@ download_adguard() {
     curl --fail --show-error --silent --location --proto '=https' --proto-redir '=https' \
         --connect-timeout 20 --max-time 300 --retry 3 \
         "https://static.adtidy.org/adguardhome/release/AdGuardHome_linux_${arch}.tar.gz" \
-        -o "$STAGE/release.tar.gz"
-    mkdir "$STAGE/release"
-    tar -xzf "$STAGE/release.tar.gz" --no-same-owner --no-same-permissions \
-        -C "$STAGE/release" AdGuardHome/AdGuardHome
-    "$STAGE/release/AdGuardHome/AdGuardHome" --version
-    install -m 755 "$STAGE/release/AdGuardHome/AdGuardHome" "$APP/AdGuardHome.new"
+        -o "$work/release.tar.gz"
+    tar -xzf "$work/release.tar.gz" --no-same-owner --no-same-permissions \
+        -C "$work" ./AdGuardHome/AdGuardHome
+    "$work/AdGuardHome/AdGuardHome" --version
+    install -m 755 "$work/AdGuardHome/AdGuardHome" "$APP/AdGuardHome.new"
     mv -f "$APP/AdGuardHome.new" "$APP/AdGuardHome"
-}
+)
 
 configure_adguard() (
     local restart=false
@@ -129,6 +131,7 @@ setup() {
     systemctl enable "$SERVICE"
     systemctl restart "$SERVICE"
     wait_for_dns
+    wait_for_filters
     status
     log 'Admin UI: run ./dns-server/manage.ps1 Admin, then open http://127.0.0.1:3000'
 }
@@ -147,6 +150,16 @@ wait_for_dns() {
         sleep 2
     done
     fail 'DNS did not become ready; inspect sudo journalctl -u AdGuardHome.'
+}
+
+wait_for_filters() {
+    # AdGuard downloads filter lists asynchronously after (re)start.
+    local attempt
+    for attempt in {1..30}; do
+        if python3 "$STAGE/adguard.py" health "$APP" >/dev/null 2>&1; then return 0; fi
+        sleep 2
+    done
+    # Not fatal here; status reports the concrete problem.
 }
 
 status() {
@@ -181,7 +194,7 @@ status() {
     if command -v vcgencmd >/dev/null; then vcgencmd measure_temp; vcgencmd get_throttled; fi
     printf 'Running kernel: %s\n' "$(uname -r)"
     if [[ -f /var/run/reboot-required ]]; then
-        printf 'REBOOT REQUIRED: in WSL, schedule ssh -t dns-server "sudo reboot"\n'
+        printf 'REBOOT REQUIRED: in WSL, schedule ssh -t roka-dns-server "sudo reboot"\n'
     else
         printf 'No reboot marker. Pi OS may not create one; review kernel/firmware updates manually.\n'
     fi

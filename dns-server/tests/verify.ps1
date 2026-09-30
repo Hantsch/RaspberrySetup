@@ -94,7 +94,7 @@ try {
         $global:LASTEXITCODE = 0
         Assert (-not ($source -match '^[A-Za-z]:')) 'SCP source must use a Linux path'
         Assert (-not ($destination -match '^[A-Za-z]:')) 'SCP destination must use a Linux path'
-        if (-not $destination.StartsWith('dns-server:')) {
+        if (-not $destination.StartsWith('roka-dns-server:')) {
             Assert ($global:dnsServerTest.Paths.ContainsKey($destination)) 'Download destination translated with wslpath'
             $destination = $global:dnsServerTest.Paths[$destination]
         } else {
