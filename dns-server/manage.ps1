@@ -28,6 +28,29 @@ function Invoke-Wsl([string[]] $Command) {
     if ($LASTEXITCODE -ne 0) { throw "WSL $($Command[0]) failed (exit $LASTEXITCODE). Check the selected distribution and Linux SSH setup." }
 }
 
+function Select-WslDistribution {
+    # wsl.exe prints UTF-16; strip NULs/BOM so both PowerShell editions parse it.
+    $names = @(& wsl.exe --list --quiet 2>$null | ForEach-Object { ($_ -replace "[\0﻿]", '').Trim() } |
+        Where-Object { $_ -and $_ -notmatch '^(docker-desktop|rancher-desktop)' })
+    if ($names.Count -eq 0) {
+        throw 'No usable WSL distribution found (docker-desktop is not usable). Install one, e.g. "wsl --install -d Ubuntu".'
+    }
+    if ($names -contains $script:WslDistribution) { return }
+    if ($script:WslDistribution) { Write-Warning "WSL distribution '$script:WslDistribution' not found." }
+    if ($names.Count -eq 1) {
+        $script:WslDistribution = $names[0]
+    } else {
+        Write-Host 'Available WSL distributions:'
+        for ($i = 0; $i -lt $names.Count; $i++) { Write-Host "  [$($i + 1)] $($names[$i])" }
+        do {
+            $choice = 0
+            $answer = Read-Host "Select distribution (1-$($names.Count))"
+        } until ([int]::TryParse($answer, [ref] $choice) -and $choice -ge 1 -and $choice -le $names.Count)
+        $script:WslDistribution = $names[$choice - 1]
+    }
+    Write-Host "Using WSL distribution: $script:WslDistribution (pass -WslDistribution '$script:WslDistribution' to skip this prompt)"
+}
+
 function ConvertTo-WslPath([string] $Path) {
     $windowsPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
     $output = Invoke-Wsl @('wslpath', '-a', '-u', $windowsPath)
@@ -72,6 +95,7 @@ function Save-PiBackup([switch] $AllowMissing) {
 
 try {
     $null = Get-Command wsl.exe -ErrorAction Stop
+    Select-WslDistribution
     if ($Action -eq 'Admin') {
         Write-Host 'Open http://127.0.0.1:3000 in your Windows browser. Keep this tunnel open; Ctrl+C closes it.'
         Invoke-Wsl (@('ssh') + $sshOptions + @('-N', '-o', 'ExitOnForwardFailure=yes', '-L', '127.0.0.1:3000:127.0.0.1:3000', $sshHost))

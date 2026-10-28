@@ -8,7 +8,12 @@ trap 'code=$?; printf "ERROR: line %s failed (exit %s).\n" "$LINENO" "$code" >&2
 APP=/opt/AdGuardHome
 SERVICE=AdGuardHome
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
-log() { printf '\n== %s ==\n' "$*"; }
+if [[ -t 1 ]]; then
+    C_OK=$'\e[1;32m' C_WARN=$'\e[1;33m' C_FAIL=$'\e[1;31m' C_HEAD=$'\e[1;36m' C_OFF=$'\e[0m'
+else
+    C_OK= C_WARN= C_FAIL= C_HEAD= C_OFF=
+fi
+log() { printf '\n%s== %s ==%s\n' "$C_HEAD" "$*" "$C_OFF"; }
 
 require_install() {
     [[ -f $APP/.managed-dns-server ]] || fail 'This is not an installation managed by dns-server/; inspect it before making changes.'
@@ -162,41 +167,111 @@ wait_for_filters() {
     # Not fatal here; status reports the concrete problem.
 }
 
+report() {
+    # report <OK|WARN|FAIL> <label> <text>; counters live in status().
+    local color
+    case $1 in
+        OK) color=$C_OK ;;
+        WARN) color=$C_WARN; warned=$((warned + 1)) ;;
+        *) color=$C_FAIL; failed=1 ;;
+    esac
+    printf '  %s%-4s%s  %-12s %s\n' "$color" "$1" "$C_OFF" "$2" "$3"
+}
+
+rate() {
+    # rate <value> <warn-at> <fail-at> <label> <text>
+    if (( $1 >= $3 )); then report FAIL "$4" "$5"
+    elif (( $1 >= $2 )); then report WARN "$4" "$5"
+    else report OK "$4" "$5"; fi
+}
+
 status() {
     require_install
-    local failed=0 output usage server transport flag
-    log 'AdGuard Home and DNS health'
-    "$APP/AdGuardHome" --version
-    if ! systemctl is-active "$SERVICE"; then failed=1; fi
-    if ! systemctl is-enabled "$SERVICE"; then failed=1; fi
+    local failed=0 warned=0 output server transport label
+    local total used pct swap_total swap_used size avail raw temp hex bits bit names load cores
+    log 'AdGuard Home and DNS'
+    report OK 'Version' "$("$APP/AdGuardHome" --version)"
+    if systemctl is-active --quiet "$SERVICE"; then report OK 'Service' 'running'; else report FAIL 'Service' 'not running'; fi
+    if systemctl is-enabled --quiet "$SERVICE"; then report OK 'Autostart' 'enabled'; else report FAIL 'Autostart' 'not enabled'; fi
     for server in 127.0.0.1 "$PI_IPV4"; do
         for transport in +notcp +tcp; do
+            label=UDP
+            if [[ $transport == +tcp ]]; then label=TCP; fi
             if dns_query "$server" "$transport"; then
-                printf 'OK: DNS %s %s (%s)\n' "$server" "$transport" "$DNS_TEST_NAME"
+                report OK 'DNS' "$server $label ($DNS_TEST_NAME resolves)"
             else
-                printf 'FAIL: DNS %s %s (%s)\n' "$server" "$transport" "$DNS_TEST_NAME"; failed=1
+                report FAIL 'DNS' "$server $label ($DNS_TEST_NAME did not resolve)"
             fi
         done
     done
-    if ! curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/login.html >/dev/null; then failed=1; fi
-    if ! python3 "$STAGE/adguard.py" health "$APP"; then failed=1; fi
-    log 'System health'
-    uptime
-    free -h
-    df -h / "$APP"
-    df -i / "$APP"
-    for flag in -P -Pi; do
-        usage=$(df "$flag" / "$APP" | awk 'NR > 1 { gsub(/%/, "", $5); if ($5 >= 90) print $5 }')
-        if [[ -n $usage ]]; then printf 'FAIL: Disk/inode usage >=90%%.\n'; failed=1; fi
-    done
-    output=$(systemctl --failed --no-legend --plain)
-    if [[ -n $output ]]; then printf 'FAIL: Failed systemd units:\n%s\n' "$output"; failed=1; fi
-    if command -v vcgencmd >/dev/null; then vcgencmd measure_temp; vcgencmd get_throttled; fi
-    printf 'Running kernel: %s\n' "$(uname -r)"
-    if [[ -f /var/run/reboot-required ]]; then
-        printf 'REBOOT REQUIRED: in WSL, schedule ssh -t roka-dns-server "sudo reboot"\n'
+    if curl --fail --silent --max-time 5 http://127.0.0.1:3000/login.html >/dev/null; then
+        report OK 'Web UI' 'reachable on 127.0.0.1:3000'
     else
-        printf 'No reboot marker. Pi OS may not create one; review kernel/firmware updates manually.\n'
+        report FAIL 'Web UI' 'not reachable on 127.0.0.1:3000'
+    fi
+    if output=$(python3 "$STAGE/adguard.py" health "$APP" 2>&1); then
+        report OK 'Filtering' "${output#OK: }"
+    else
+        report FAIL 'Filtering' "${output#ERROR: }"
+    fi
+
+    log 'System'
+    report OK 'Uptime' "$(uptime -p | sed 's/^up //')"
+    read -r load _ < /proc/loadavg
+    cores=$(nproc)
+    if awk -v l="$load" -v c="$cores" 'BEGIN { exit !(l > c) }'; then
+        report WARN 'Load' "$load (1 min) on $cores cores"
+    else
+        report OK 'Load' "$load (1 min) on $cores cores"
+    fi
+    read -r total used <<< "$(free -m | awk '/^Mem:/ { print $2, $3 }')"
+    pct=$((used * 100 / total))
+    rate "$pct" 85 95 'Memory' "$used MiB of $total MiB used (${pct}%)"
+    read -r swap_total swap_used <<< "$(free -m | awk '/^Swap:/ { print $2, $3 }')"
+    if (( swap_total > 0 )); then
+        pct=$((swap_used * 100 / swap_total))
+        rate "$pct" 50 90 'Swap' "$swap_used MiB of $swap_total MiB used (${pct}%)"
+    fi
+    read -r size used avail pct <<< "$(df -Ph / | awk 'NR == 2 { gsub(/%/, "", $5); print $2, $3, $4, $5 }')"
+    rate "$pct" 80 90 'Disk' "$used of $size used, $avail free (${pct}%)"
+    pct=$(df -Pi / | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }')
+    rate "$pct" 80 90 'Inodes' "${pct}% used"
+    if command -v vcgencmd >/dev/null; then
+        raw=$(vcgencmd measure_temp)
+        temp=${raw#temp=}; temp=${temp%%\'*}
+        rate "${temp%.*}" 70 80 'Temperature' "${temp} °C"
+        hex=$(vcgencmd get_throttled); hex=${hex#throttled=}
+        bits=$((hex))
+        if (( bits == 0 )); then
+            report OK 'Power/Throttle' 'no under-voltage or throttling since boot'
+        else
+            names=
+            for bit in 0:under-voltage 1:frequency-capped 2:throttled 3:soft-temp-limit \
+                16:under-voltage-occurred 17:frequency-cap-occurred 18:throttling-occurred 19:soft-temp-limit-occurred; do
+                if (( bits & (1 << ${bit%%:*}) )); then names+="${names:+, }${bit#*:}"; fi
+            done
+            report WARN 'Power/Throttle' "$hex: $names"
+        fi
+    fi
+    output=$(systemctl --failed --no-legend --plain)
+    if [[ -n $output ]]; then
+        report FAIL 'systemd' "failed units: $(awk '{ print $1 }' <<< "$output" | paste -sd ' ')"
+    else
+        report OK 'systemd' 'no failed units'
+    fi
+    report OK 'Kernel' "$(uname -r)"
+    if [[ -f /var/run/reboot-required ]]; then
+        report WARN 'Reboot' 'required; run: ssh -t roka-dns-server "sudo reboot"'
+    else
+        report OK 'Reboot' 'not flagged (Pi OS may not flag kernel/firmware updates; check manually)'
+    fi
+
+    if (( failed )); then
+        printf '\n%sOverall: FAILED%s - see the FAIL lines above.\n' "$C_FAIL" "$C_OFF"
+    elif (( warned )); then
+        printf '\n%sOverall: OK with %d warning(s)%s - see the WARN lines above.\n' "$C_WARN" "$warned" "$C_OFF"
+    else
+        printf '\n%sOverall: OK%s - nothing to do.\n' "$C_OK" "$C_OFF"
     fi
     return "$failed"
 }
